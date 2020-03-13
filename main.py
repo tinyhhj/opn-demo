@@ -7,7 +7,7 @@ from PIL import Image
 import cv2
 from datetime import datetime
 import torchvision.transforms as transforms
-thickness = os.getenv('OPN_THICKNESS') or 8
+thickness = int(os.getenv('OPN_THICKNESS')) or 8
 # result make dir
 root = os.getenv('OPN_ROOT') or 'checkpoints/opn'
 results = os.path.join(root,'results')
