@@ -2,28 +2,14 @@ from __future__ import division
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.init as init
-import torch.utils.model_zoo as model_zoo
-from torchvision import models
- 
-# general libs
-import cv2
-import matplotlib.pyplot as plt
-from PIL import Image
-import numpy as np
-import math
-import time
-import tqdm
-import os
-import argparse
-import copy
+
 import sys
-import random
- 
+
 sys.path.insert(0, '.')
 from .common import *
-sys.path.insert(0, '../utils/')
-from utils.helpers import *
+# sys.path.insert(0, '../utils/')
+# from ..utils.helpers import *
+import math
  
 class Encoder(nn.Module):
     def __init__(self):
@@ -185,7 +171,7 @@ class OPN(nn.Module):
         qkey, qval = self.Encoder(frame, valid, hole)
         qpel = peel3
         # read.
-        read = self.MaskedRead(qkey, qval, qpel, mkey, mval, 1-mhol)
+        read = self.MaskedRead(qkey, qval, qpel, mkey, mval, ~mhol)
         # decode
         pred = self.Decoder(read)
         comp = (1-peel)*frame + peel*pred # fill peel area

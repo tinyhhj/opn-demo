@@ -2,47 +2,74 @@
 
 from __future__ import division
 import torch
-from torch.utils import data
 
 import torch.nn as nn
-import torch.nn.functional as F
+
 
 # general libs
 import cv2
 from PIL import Image
 import numpy as np
-import math
-import time
-import os
+
 import sys
 import argparse
 
 
+
 ### My libs
-sys.path.append('utils/')
-sys.path.append('models/')
-from utils.helpers import *
-from models.OPN import OPN
+# sys.path.append('utils/')
+# sys.path.append('models/')
+from .utils.helpers import *
+from .models.OPN import OPN
 
 def get_arguments():
     parser = argparse.ArgumentParser(description="args")
     parser.add_argument("--input", type=str, default='3e91f10205_2', required=True)
     return parser.parse_args()
 args = get_arguments()
+aug = 4
 seq_name = args.input
-
+dir = os.path.join('Image_inputs',args.input)
+num = len([f for f in os.listdir(dir) if f.startswith('gt')]) * aug
 
 #################### Load image
-T, H, W = 5, 240, 424
-frames = np.empty((T, H, W, 3), dtype=np.float32)
-holes = np.empty((T, H, W, 1), dtype=np.float32)
-dists = np.empty((T, H, W, 1), dtype=np.float32)
-for i in range(5):
+T, H, W = num, 240, 424
+frames = np.empty((T*aug, H, W, 3), dtype=np.float32)
+holes = np.empty((T*aug, H, W, 1), dtype=np.float32)
+dists = np.empty((T*aug, H, W, 1), dtype=np.float32)
+
+
+def shift_down(frames,orig,copy,stride):
+    frames[copy, :stride] = frames[orig, 0]
+    frames[copy, stride:] = frames[orig, :-stride]
+def shift_up(frames,orig,copy,stride):
+    frames[copy, :-stride] = frames[orig, stride:]
+    frames[copy, -stride:] = frames[orig, -1]
+def shift_right(frames,orig,copy,stride):
+    # print(frames[copy,:,:stride].shape, np.stack([frames[orig,:,0]]*stride,1).shape)
+    frames[copy,:,:stride] = np.stack([frames[orig,:,0]],1)
+    frames[copy,:,stride:] = frames[orig,:,:-stride]
+def shift_left(frames,orig,copy,stride):
+    frames[copy, :, :-stride] = frames[orig, :, stride:]
+    frames[copy, :, -stride:] = np.stack([frames[orig, :, -1]]*stride,1)
+def horizontal_flip(frames,orig,copy):
+    frames[copy] = frames[orig,:,::-1,...]
+
+
+stride = 30
+for i in range(T // aug):
     #### rgb
     img_file = os.path.join('Image_inputs', seq_name, 'gt_{}.jpg'.format(i))
     raw_frame = np.array(Image.open(img_file).convert('RGB'))/255.
     raw_frame = cv2.resize(raw_frame, dsize=(W, H), interpolation=cv2.INTER_CUBIC)
     frames[i] = raw_frame
+    frames[i+1] = raw_frame.copy()
+    horizontal_flip(frames,i,i+2)
+    shift_down(frames, i+2, i + 3, stride)
+    # shift_up(frames, i, i + 2, stride)
+    # shift_right(frames, i, i + 3, stride)
+    # shift_left(frames, i, i + 4, stride)
+
     #### mask
     mask_file = os.path.join('Image_inputs', seq_name, 'mask_{}.png'.format(i))
     raw_mask = np.array(Image.open(mask_file).convert('P'), dtype=np.uint8)
@@ -50,8 +77,21 @@ for i in range(5):
     raw_mask = cv2.resize(raw_mask, dsize=(W, H), interpolation=cv2.INTER_NEAREST)
     raw_mask = cv2.dilate(raw_mask, cv2.getStructuringElement(cv2.MORPH_CROSS,(3,3)))
     holes[i,:,:,0] = raw_mask.astype(np.float32)
+    holes[i+1,:,:,0] = raw_mask.astype(np.float32).copy()
+    horizontal_flip(holes,i,i+2)
+    shift_down(holes, i+2, i + 3, stride)
+    # shift_up(holes, i, i + 2, stride)
+    # shift_right(holes, i, i + 3, stride)
+    # shift_left(holes, i, i + 4, stride)
+
     #### dist
     dists[i,:,:,0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5)
+    dists[i+1,:,:,0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5).copy()
+    horizontal_flip(dists, i, i + 2)
+    shift_down(dists, i+2, i + 3, stride)
+    # shift_up(dists, i, i + 2, stride)
+    # shift_right(dists, i, i + 3, stride)
+    # shift_left(dists, i, i + 4, stride)
 
 frames = torch.from_numpy(np.transpose(frames, (3, 0, 1, 2)).copy()).float()
 holes = torch.from_numpy(np.transpose(holes, (3, 0, 1, 2)).copy()).float()
