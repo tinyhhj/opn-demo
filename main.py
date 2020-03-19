@@ -9,8 +9,10 @@ from datetime import datetime
 import torchvision.transforms as transforms
 thickness = int(os.getenv('OPN_THICKNESS') or 8)
 # result make dir
+date = datetime.today().strftime("%Y/%m/%d")
+
 root = os.getenv('OPN_ROOT') or 'checkpoints/opn'
-results = os.path.join(root,'results')
+results = os.path.join(root,date,'results')
 
 model = nn.DataParallel(OPN(thickness=thickness))
 if torch.cuda.is_available():
@@ -37,38 +39,39 @@ def horizontal_flip(frames,orig,copy):
     frames[copy] = frames[orig,:,::-1,...]
 def inference(image, mask):
     stride = 10
-    T = aug = 4
+    T = aug = 3
     input_size = int(os.getenv('INPUT_SIZE'))
     H, W = input_size, input_size
     frames = np.empty((T * aug, H, W, 3), dtype=np.float32)
     holes = np.empty((T * aug, H, W, 1), dtype=np.float32)
     dists = np.empty((T * aug, H, W, 1), dtype=np.float32)
     mt = transforms.Compose([
-        transforms.Resize((input_size, input_size)),
+        # transforms.Lambda(lambda img: img.mul(255)),
+        transforms.ToPILImage(),
     ])
     orig_image = mt(image)
     orig_mask = mt(mask)
     for i in range(T // aug):
         #### rgb
-        raw_frame = np.array(image) / 255.
+        raw_frame = image.permute((1,2,0)).float().numpy()
         raw_frame = cv2.resize(raw_frame, dsize=(W, H), interpolation=cv2.INTER_CUBIC)
         frames[i] = raw_frame
         frames[i + 1] = raw_frame.copy()
         horizontal_flip(frames, i, i + 2)
-        shift_down(frames, i + 2, i + 3, stride)
+        # shift_down(frames, i + 2, i + 3, stride)
         # shift_up(frames, i, i + 2, stride)
         # shift_right(frames, i, i + 3, stride)
         # shift_left(frames, i, i + 4, stride)
 
         #### mask
-        raw_mask = np.array(mask, dtype=np.uint8)
+        raw_mask = mask.permute((1,2,0)).byte().numpy()
         raw_mask = (raw_mask > 0.5).astype(np.uint8)
         raw_mask = cv2.resize(raw_mask, dsize=(W, H), interpolation=cv2.INTER_NEAREST)
         raw_mask = cv2.dilate(raw_mask, cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3)))
         holes[i, :, :, 0] = raw_mask.astype(np.float32)
         holes[i + 1, :, :, 0] = raw_mask.astype(np.float32).copy()
         horizontal_flip(holes, i, i + 2)
-        shift_down(holes, i + 2, i + 3, stride)
+        # shift_down(holes, i + 2, i + 3, stride)
         # shift_up(holes, i, i + 2, stride)
         # shift_right(holes, i, i + 3, stride)
         # shift_left(holes, i, i + 4, stride)
@@ -77,7 +80,7 @@ def inference(image, mask):
         dists[i, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5)
         dists[i + 1, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5).copy()
         horizontal_flip(dists, i, i + 2)
-        shift_down(dists, i + 2, i + 3, stride)
+        # shift_down(dists, i + 2, i + 3, stride)
         # shift_up(dists, i, i + 2, stride)
         # shift_right(dists, i, i + 3, stride)
         # shift_left(dists, i, i + 4, stride)
@@ -133,8 +136,9 @@ def inference(image, mask):
         #     os.makedirs(save_path)
         # canvas = Image.fromarray(canvas)
         # canvas.save(os.path.join(save_path, 'res_{}.jpg'.format(f)))
+        time = datetime.today().strftime('%H_%M')
         filename = os.path.splitext(image.filename)
-        Image.fromarray(est).save(os.path.join(results,f'{datetime.today().strftime("%Y_%m_%d_%H_%M")}_{filename[0]}_{f}{filename[1]}'))
+        Image.fromarray(est).save(os.path.join(results,f'{time}_{filename[0]}_{f}{filename[1]}'))
     return Image.fromarray(original_est)
 
         # print('Results are saved: ./{}'.format(save_path))
