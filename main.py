@@ -123,6 +123,8 @@ def inference(image, mask):
         # visualize..
         est = (comp[0].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)
         mask_3d = (np.stack([orig_mask]*3,2) / 255).astype(np.uint8)
+        # cv2.GaussianBlur
+        est = cv2.bilateralFilter(est*mask_3d,5,75,75)
         est = np.array(orig_image) * (1 - mask_3d) + est * mask_3d
         if f == 0:
             original_est = est

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import sys
 
 # sys.path.insert(0, '../utils/')
-from ..utils.helpers import *
+from .helpers import *
 
 ##########################################
 ############   Generic   #################
