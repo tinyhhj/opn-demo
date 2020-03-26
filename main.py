@@ -40,8 +40,8 @@ def horizontal_flip(frames,orig,copy):
 def inference(image, mask):
     stride = 10
     T = aug = 3
-    input_size = int(os.getenv('INPUT_SIZE'))
-    H, W = input_size, input_size
+    # input_size = int(os.getenv('INPUT_SIZE'))
+    _,H, W = image.size()
     frames = np.empty((T * aug, H, W, 3), dtype=np.float32)
     holes = np.empty((T * aug, H, W, 1), dtype=np.float32)
     dists = np.empty((T * aug, H, W, 1), dtype=np.float32)
@@ -103,7 +103,7 @@ def inference(image, mask):
     with torch.no_grad():
         mkey, mval, mhol = model(frames[:, :, midx], valids[:, :, midx], dists[:, :, midx])
     original_est = None
-    for f in range(T):
+    for f in range(T // aug):
         # memory selection
         ridx = [i for i in range(len(midx)) if i != f]  # memory minus self
         fkey, fval, fhol = mkey[:, :, ridx], mval[:, :, ridx], mhol[:, :, ridx]
@@ -124,7 +124,7 @@ def inference(image, mask):
         est = (comp[0].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)
         mask_3d = (np.stack([orig_mask]*3,2) / 255).astype(np.uint8)
         # cv2.GaussianBlur
-        est = cv2.bilateralFilter(est*mask_3d,5,75,75)
+        # est = cv2.bilateralFilter(est*mask_3d,5,75,75)
         est = np.array(orig_image) * (1 - mask_3d) + est * mask_3d
         if f == 0:
             original_est = est

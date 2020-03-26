@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import sys
-
+print(__name__)
 sys.path.insert(0, '.')
 from .common import *
 # sys.path.insert(0, '../utils/')
