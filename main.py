@@ -39,7 +39,7 @@ def horizontal_flip(frames,orig,copy):
     frames[copy] = frames[orig,:,::-1,...]
 def inference(image, mask):
     stride = 10
-    T = aug = 3
+    T = aug = 2
     # input_size = int(os.getenv('INPUT_SIZE'))
     _,H, W = image.size()
     frames = np.empty((T * aug, H, W, 3), dtype=np.float32)
@@ -57,7 +57,7 @@ def inference(image, mask):
         raw_frame = cv2.resize(raw_frame, dsize=(W, H), interpolation=cv2.INTER_CUBIC)
         frames[i] = raw_frame
         frames[i + 1] = raw_frame.copy()
-        horizontal_flip(frames, i, i + 2)
+        # horizontal_flip(frames, i, i + 2)
         # shift_down(frames, i + 2, i + 3, stride)
         # shift_up(frames, i, i + 2, stride)
         # shift_right(frames, i, i + 3, stride)
@@ -70,7 +70,7 @@ def inference(image, mask):
         raw_mask = cv2.dilate(raw_mask, cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3)))
         holes[i, :, :, 0] = raw_mask.astype(np.float32)
         holes[i + 1, :, :, 0] = raw_mask.astype(np.float32).copy()
-        horizontal_flip(holes, i, i + 2)
+        # horizontal_flip(holes, i+1, i + 2)
         # shift_down(holes, i + 2, i + 3, stride)
         # shift_up(holes, i, i + 2, stride)
         # shift_right(holes, i, i + 3, stride)
@@ -79,7 +79,7 @@ def inference(image, mask):
         #### dist
         dists[i, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5)
         dists[i + 1, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5).copy()
-        horizontal_flip(dists, i, i + 2)
+        # horizontal_flip(dists, i+1, i + 2)
         # shift_down(dists, i + 2, i + 3, stride)
         # shift_up(dists, i, i + 2, stride)
         # shift_right(dists, i, i + 3, stride)
@@ -138,7 +138,7 @@ def inference(image, mask):
         #     os.makedirs(save_path)
         # canvas = Image.fromarray(canvas)
         # canvas.save(os.path.join(save_path, 'res_{}.jpg'.format(f)))
-        time = datetime.today().strftime('%H_%M')
+        time = datetime.today().strftime('%H_%M_%S')
         filename = os.path.splitext(image.filename)
         Image.fromarray(est).save(os.path.join(results,f'{time}_{filename[0]}_{f}{filename[1]}'))
     return Image.fromarray(original_est)
