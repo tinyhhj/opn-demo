@@ -1,4 +1,6 @@
 from .models.OPN import OPN
+from .models.TCN import TCN
+from .models.helpers import overlay_davis
 import torch.nn as nn
 import torch
 import os
@@ -11,7 +13,7 @@ thickness = int(os.getenv('OPN_THICKNESS') or 8)
 # result make dir
 date = datetime.today().strftime("%Y/%m/%d")
 
-root = os.getenv('OPN_ROOT') or 'checkpoints/opn'
+root = os.getenv('OPN_ROOT') or os.getenv('UPLOAD_PATH') or 'checkpoints/opn'
 results = os.path.join(root,date,'results')
 
 model = nn.DataParallel(OPN(thickness=thickness))
@@ -19,6 +21,12 @@ if torch.cuda.is_available():
     model.cuda()
 model.load_state_dict(torch.load(os.path.join(os.path.dirname(__file__),'OPN.pth')), strict=False)
 model.eval()
+
+pp_model = nn.DataParallel(TCN())
+if torch.cuda.is_available():
+    pp_model.cuda()
+pp_model.load_state_dict(torch.load(os.path.join(os.path.dirname(__file__),'TCN.pth')), strict=False)
+pp_model.eval()
 
 if not os.path.exists(results):
     os.makedirs(results)
@@ -37,26 +45,36 @@ def shift_left(frames,orig,copy,stride):
     frames[copy, :, -stride:] = np.stack([frames[orig, :, -1]]*stride,1)
 def horizontal_flip(frames,orig,copy):
     frames[copy] = frames[orig,:,::-1,...]
-def inference(image, mask):
-    stride = 10
-    T = aug = 2
+def inference(images, masks, filename,memory_period = 1):
+    '''
+    :param images: frames T C H W
+    :param masks: masks T C H W
+    :param memory_period: image 1 video over 1
+    :return: image, video inpainting result
+    '''
     # input_size = int(os.getenv('INPUT_SIZE'))
-    _,H, W = image.size()
-    frames = np.empty((T * aug, H, W, 3), dtype=np.float32)
-    holes = np.empty((T * aug, H, W, 1), dtype=np.float32)
-    dists = np.empty((T * aug, H, W, 1), dtype=np.float32)
+    global pp_model, model
+    B,_,H, W = images.size()
+    # at least we need 2 images
+    T = 2 if B == 1 else B
+    if B == 1:
+        images = torch.cat([images, images])
+        masks = torch.cat([masks,masks])
+
+    frames = np.empty((T , H, W, 3), dtype=np.float32)
+    holes = np.empty((T , H, W, 1), dtype=np.float32)
+    dists = np.empty((T , H, W, 1), dtype=np.float32)
     mt = transforms.Compose([
-        # transforms.Lambda(lambda img: img.mul(255)),
         transforms.ToPILImage(),
     ])
-    orig_image = mt(image)
-    orig_mask = mt(mask)
-    for i in range(T // aug):
+    orig_image = mt(images[0])
+    orig_mask = mt(masks[0])
+    for i in range(T):
         #### rgb
-        raw_frame = image.permute((1,2,0)).float().numpy()
+        raw_frame = images[i].permute((1,2,0)).float().numpy()
         raw_frame = cv2.resize(raw_frame, dsize=(W, H), interpolation=cv2.INTER_CUBIC)
         frames[i] = raw_frame
-        frames[i + 1] = raw_frame.copy()
+        # frames[i + 1] = raw_frame.copy()
         # horizontal_flip(frames, i, i + 2)
         # shift_down(frames, i + 2, i + 3, stride)
         # shift_up(frames, i, i + 2, stride)
@@ -64,12 +82,12 @@ def inference(image, mask):
         # shift_left(frames, i, i + 4, stride)
 
         #### mask
-        raw_mask = mask.permute((1,2,0)).byte().numpy()
+        raw_mask = masks[i].permute((1,2,0)).byte().numpy()
         raw_mask = (raw_mask > 0.5).astype(np.uint8)
         raw_mask = cv2.resize(raw_mask, dsize=(W, H), interpolation=cv2.INTER_NEAREST)
         raw_mask = cv2.dilate(raw_mask, cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3)))
         holes[i, :, :, 0] = raw_mask.astype(np.float32)
-        holes[i + 1, :, :, 0] = raw_mask.astype(np.float32).copy()
+        # holes[i + 1, :, :, 0] = raw_mask.astype(np.float32).copy()
         # horizontal_flip(holes, i+1, i + 2)
         # shift_down(holes, i + 2, i + 3, stride)
         # shift_up(holes, i, i + 2, stride)
@@ -78,7 +96,7 @@ def inference(image, mask):
 
         #### dist
         dists[i, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5)
-        dists[i + 1, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5).copy()
+        # dists[i + 1, :, :, 0] = cv2.distanceTransform(raw_mask, cv2.DIST_L2, maskSize=5).copy()
         # horizontal_flip(dists, i+1, i + 2)
         # shift_down(dists, i + 2, i + 3, stride)
         # shift_up(dists, i, i + 2, stride)
@@ -99,11 +117,14 @@ def inference(image, mask):
     valids = valids.unsqueeze(0)
 
     # memory encoding
-    midx = list(range(0, T))
+    midx = list(range(0, T, memory_period))
+    comp_size = list(frames.size())
+    comp_size[2] += 1
+    comps = torch.zeros(comp_size)
     with torch.no_grad():
         mkey, mval, mhol = model(frames[:, :, midx], valids[:, :, midx], dists[:, :, midx])
     original_est = None
-    for f in range(T // aug):
+    for f in range(T):
         # memory selection
         ridx = [i for i in range(len(midx)) if i != f]  # memory minus self
         fkey, fval, fhol = mkey[:, :, ridx], mval[:, :, ridx], mhol[:, :, ridx]
@@ -119,7 +140,7 @@ def inference(image, mask):
             comp, dist = comp.detach(), dist.detach()
             if torch.sum(dist).item() == 0:
                 break
-
+        comps[:,:,f] = comp
         # visualize..
         est = (comp[0].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)
         mask_3d = (np.stack([orig_mask]*3,2) / 255).astype(np.uint8)
@@ -138,9 +159,29 @@ def inference(image, mask):
         #     os.makedirs(save_path)
         # canvas = Image.fromarray(canvas)
         # canvas.save(os.path.join(save_path, 'res_{}.jpg'.format(f)))
-        time = datetime.today().strftime('%H_%M_%S')
-        filename = os.path.splitext(image.filename)
-        Image.fromarray(est).save(os.path.join(results,f'{time}_{filename[0]}_{f}{filename[1]}'))
-    return Image.fromarray(original_est)
+        if memory_period == 1:
+            # only image processing save result images
+            time = datetime.today().strftime('%H_%M_%S')
+            Image.fromarray(est).save(os.path.join(results,f'{time}_{filename}_{f}.jpg'))
+    if memory_period > 1 :
+        hidden = None
+        # only video processing do video post process
+        for f in range(T):
+            with torch.no_grad():
+                comps[:, :, f], hidden = pp_model(comps[:, :, f - 1], holes[:, :, f - 1], comps[:, :, f], holes[:, :, f], hidden)
 
-        # print('Results are saved: ./{}'.format(save_path))
+        for f in range(T):
+            # visualize..
+            est = (comps[0, :, f].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)
+            true = (frames[0, :, f].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)  # h,w,3
+            mask = (dists[0, 0, f].detach().cpu().numpy() > 0).astype(np.uint8)  # h,w,1
+            ov_true = overlay_davis(true, mask, colors=[[0, 0, 0], [0, 100, 100]], cscale=2, alpha=0.4)
+
+            canvas = np.concatenate([ov_true, est], axis=0)
+
+            save_path = os.path.join(results, filename)
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
+            canvas = Image.fromarray(canvas)
+            canvas.save(os.path.join(save_path, '{:05d}.jpg'.format(f)))
+    return Image.fromarray(original_est)
