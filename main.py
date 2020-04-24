@@ -61,7 +61,7 @@ def inference(images, masks, filename,memory_period = 1):
         images = torch.cat([images, images])
         masks = torch.cat([masks,masks])
 
-    frames = np.empty((T , H, W, 3), dtype=np.float32)
+    orig_frames = np.empty((T , H, W, 3), dtype=np.float32)
     holes = np.empty((T , H, W, 1), dtype=np.float32)
     dists = np.empty((T , H, W, 1), dtype=np.float32)
     mt = transforms.Compose([
@@ -73,7 +73,7 @@ def inference(images, masks, filename,memory_period = 1):
         #### rgb
         raw_frame = images[i].permute((1,2,0)).float().numpy()
         raw_frame = cv2.resize(raw_frame, dsize=(W, H), interpolation=cv2.INTER_CUBIC)
-        frames[i] = raw_frame
+        orig_frames[i] = raw_frame
         # frames[i + 1] = raw_frame.copy()
         # horizontal_flip(frames, i, i + 2)
         # shift_down(frames, i + 2, i + 3, stride)
@@ -102,8 +102,7 @@ def inference(images, masks, filename,memory_period = 1):
         # shift_up(dists, i, i + 2, stride)
         # shift_right(dists, i, i + 3, stride)
         # shift_left(dists, i, i + 4, stride)
-
-    frames = torch.from_numpy(np.transpose(frames, (3, 0, 1, 2)).copy()).float()
+    frames = torch.from_numpy(np.transpose(orig_frames, (3, 0, 1, 2)).copy()).float()
     holes = torch.from_numpy(np.transpose(holes, (3, 0, 1, 2)).copy()).float()
     dists = torch.from_numpy(np.transpose(dists, (3, 0, 1, 2)).copy()).float()
     # remove hole
@@ -173,9 +172,9 @@ def inference(images, masks, filename,memory_period = 1):
         for f in range(T):
             # visualize..
             est = (comps[0, :, f].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)
-            true = (frames[0, :, f].permute(1, 2, 0).detach().cpu().numpy() * 255.).astype(np.uint8)  # h,w,3
+            true = (orig_frames[f]*255).astype(np.uint8)  # h,w,3
             mask = (dists[0, 0, f].detach().cpu().numpy() > 0).astype(np.uint8)  # h,w,1
-            ov_true = overlay_davis(true, mask, colors=[[0, 0, 0], [0, 100, 100]], cscale=2, alpha=0.4)
+            ov_true = overlay_davis(true, mask, colors=[[0, 0, 0], [128, 0, 0]], cscale=2, alpha=0.4)
 
             canvas = np.concatenate([ov_true, est], axis=0)
 
