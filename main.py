@@ -15,7 +15,7 @@ date = datetime.today().strftime("%Y/%m/%d")
 
 root = os.getenv('OPN_ROOT') or os.getenv('UPLOAD_PATH') or 'checkpoints/opn'
 results = os.path.join(root,date,'results')
-env = os.getenv('FLASK_ENV') or 'DEV'
+env = os.getenv('FLASK_ENV') or 'PROD'
 
 model = nn.DataParallel(OPN(thickness=thickness))
 if torch.cuda.is_available():
@@ -51,7 +51,7 @@ def batch(iterable, n=1):
     for i in range(0,l,n):
         yield iterable[i:min(i+n,l)]
 
-def inference(images, masks, filename,memory_period = 1, batch_size=10):
+def inference(images, masks, filename,memory_period = 1, batch_size=10, frame_path=None):
     '''
     :param images: frames T C H W
     :param masks: masks T C H W
@@ -133,6 +133,9 @@ def inference(images, masks, filename,memory_period = 1, batch_size=10):
         # 왜했는지 기억 x 나중에 기록
         comp_size[2] += 1
         comps = torch.zeros(comp_size)
+        # 전 batch에서 기록해둔 마지막 comps를 로드
+        if ii != 0:
+            comps[:,:,-1] = last
         with torch.no_grad():
             mkey, mval, mhol = model(frames[:, :, midx], valids[:, :, midx], dists[:, :, midx])
         original_est = None
@@ -175,6 +178,10 @@ def inference(images, masks, filename,memory_period = 1, batch_size=10):
                 # only image processing save result images
                 time = datetime.today().strftime('%H_%M_%S')
                 Image.fromarray(est).save(os.path.join(results,f'{time}_{filename}_{f}.jpg'))
+        if ii == 0:
+            comps[:,:,-1] = comps[:,:,ii].clone()
+        last = comps[:,:,T-1].clone()
+
         if memory_period > 1 :
             hidden = None
             # only video processing do video post process
@@ -189,6 +196,11 @@ def inference(images, masks, filename,memory_period = 1, batch_size=10):
                 mask = (dists[0, 0, f].detach().cpu().numpy() > 0).astype(np.uint8)  # h,w,1
                 if env == 'PROD':
                     canvas = est
+                    target_image = Image.open(os.path.join(frame_path,f'{ii+f:05d}.jpg'))
+                    canvas = cv2.resize(canvas,target_image.size, interpolation=cv2.INTER_CUBIC)
+                    mask = cv2.resize(mask,target_image.size, interpolation=cv2.INTER_NEAREST)
+                    target_image = np.array(target_image)
+                    canvas = target_image * (1- mask[:,:,None]) + mask[:,:,None] * canvas
                 else:
                     ov_true = overlay_davis(true, mask, colors=[[0, 0, 0], [128, 0, 0]], cscale=2, alpha=0.4)
                     canvas = np.concatenate([ov_true, est], axis=0)
